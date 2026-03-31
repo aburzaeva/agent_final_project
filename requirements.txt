@@ -1,0 +1,33 @@
+# LLM & Agent
+anthropic
+langchain
+langchain-anthropic
+langchain-core
+langgraph
+
+# MCP
+mcp
+
+# RAG
+chromadb
+
+# Database
+sqlalchemy
+aiosqlite
+
+# UI
+streamlit
+plotly
+
+# Monitoring
+structlog
+langsmith
+
+# Validation & Utils
+pillow
+python-dotenv
+pydantic
+
+# Testing
+pytest
+pytest-asyncio
