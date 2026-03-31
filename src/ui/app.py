@@ -14,15 +14,17 @@ load_dotenv(os.path.join(PROJECT_ROOT, ".env"))
 
 sys.path.insert(0, PROJECT_ROOT)
 
-from src.monitoring.logging_config import setup_logging, setup_langsmith
+from src.monitoring.logging_config import setup_logging, setup_langsmith, get_logger, metrics, track_request
 from src.db.session_store import SessionStore
 from src.agent.graph import compile_graph
 from src.agent.state import AgentState
+from src.validation.validators import validate_text_input, validate_image, ValidationError
 
 setup_logging()
 setup_langsmith()
+logger = get_logger(__name__)
 
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, AIMessage
 
 
 # ─── Session init ──────────────────────────────────────────────────────
@@ -30,11 +32,13 @@ from langchain_core.messages import HumanMessage
 def init_session():
     if "session_id" not in st.session_state:
         st.session_state.session_id = str(uuid.uuid4())
-    if "messages" not in st.session_state:
-        st.session_state.messages = []
     if "store" not in st.session_state:
         db_url = os.environ.get("DATABASE_URL", "sqlite:///./data/food_tracker.db")
         st.session_state.store = SessionStore(db_url)
+    if "messages" not in st.session_state:
+        store: SessionStore = st.session_state.store
+        history = store.get_chat_history(st.session_state.session_id)
+        st.session_state.messages = history if history else []
     if "agent" not in st.session_state:
         st.session_state.agent = compile_graph()
 
@@ -131,13 +135,22 @@ def render_weekly_chart():
 
 # ─── Agent interaction ─────────────────────────────────────────────────
 
+@track_request(request_type="agent")
 def run_agent(user_text: str, image_data: tuple | None = None):
     """Run the LangGraph agent and return the response."""
     agent = st.session_state.agent
 
+    history_messages = []
+    for msg in st.session_state.messages[-10:]:
+        if msg["role"] == "user":
+            history_messages.append(HumanMessage(content=msg["content"]))
+        else:
+            history_messages.append(AIMessage(content=msg["content"]))
+    history_messages.append(HumanMessage(content=user_text))
+
     state = AgentState(
         session_id=st.session_state.session_id,
-        messages=[HumanMessage(content=user_text)],
+        messages=history_messages,
     )
 
     if image_data:
@@ -183,6 +196,15 @@ def main():
 
         st.divider()
 
+        with st.expander("⚙️ Метрики и состояние"):
+            m = metrics.get_metrics()
+            st.write(f"**Статус:** {m['status']}")
+            st.write(f"**Аптайм:** {m['uptime_seconds']:.0f}с")
+            st.write(f"**Запросов:** {m['total_requests']}")
+            st.write(f"**Ошибок:** {m['total_errors']} ({m['error_rate']:.1%})")
+            st.write(f"**Среднее время ответа:** {m['avg_response_time_ms']:.0f}мс")
+            st.write(f"**P95 время ответа:** {m['p95_response_time_ms']:.0f}мс")
+
         st.caption(f"Session: `{st.session_state.session_id[:8]}...`")
         if st.button("🔄 Новая сессия"):
             st.session_state.session_id = str(uuid.uuid4())
@@ -204,8 +226,15 @@ def main():
     image_data = None
     if uploaded_file is not None:
         image_bytes = uploaded_file.read()
-        img_base64 = base64.b64encode(image_bytes).decode("utf-8")
         media_type = uploaded_file.type or "image/jpeg"
+
+        try:
+            validate_image(image_bytes, media_type)
+        except ValidationError as e:
+            st.error(str(e))
+            st.stop()
+
+        img_base64 = base64.b64encode(image_bytes).decode("utf-8")
         image_data = (img_base64, media_type)
 
         st.image(image_bytes, caption="Загруженное фото", width=300)
@@ -230,6 +259,14 @@ def main():
 
     # Text input
     if user_input := st.chat_input("Напишите что вы ели, спросите о продукте или попросите сводку..."):
+        try:
+            user_input = validate_text_input(user_input)
+        except ValidationError as e:
+            st.error(str(e))
+            st.stop()
+
+        logger.info("user_input", session_id=st.session_state.session_id, text_length=len(user_input))
+
         st.session_state.messages.append({"role": "user", "content": user_input})
 
         with st.chat_message("user"):
