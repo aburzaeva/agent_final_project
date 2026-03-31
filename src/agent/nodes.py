@@ -213,6 +213,10 @@ def classify_text_intent(state: AgentState) -> AgentState:
             last_human = msg.content if isinstance(msg.content, str) else str(msg.content)
             break
 
+    if not last_human:
+        state.text_intent = "general_chat"
+        return state
+
     llm = _get_llm()
     response = llm.invoke([
         SystemMessage(content="Ты классификатор запросов пользователя по питанию."),
@@ -250,6 +254,11 @@ def handle_log_meal(state: AgentState) -> AgentState:
         if isinstance(msg, HumanMessage):
             last_human = msg.content if isinstance(msg.content, str) else str(msg.content)
             break
+
+    if not last_human:
+        state.final_response = "Опишите, что вы ели, чтобы я мог записать приём пищи."
+        state.messages = state.messages + [AIMessage(content=state.final_response)]
+        return state
 
     llm = _get_llm()
     response = llm.invoke([
@@ -391,6 +400,11 @@ def handle_settings(state: AgentState) -> AgentState:
             last_human = msg.content if isinstance(msg.content, str) else str(msg.content)
             break
 
+    if not last_human:
+        state.final_response = "Укажите, какие цели по питанию вы хотите установить."
+        state.messages = state.messages + [AIMessage(content=state.final_response)]
+        return state
+
     llm = _get_llm()
     response = llm.invoke([
         SystemMessage(content=(
@@ -445,6 +459,11 @@ def handle_search_product(state: AgentState) -> AgentState:
             last_human = msg.content if isinstance(msg.content, str) else str(msg.content)
             break
 
+    if not last_human:
+        state.final_response = "Укажите название продукта для поиска."
+        state.messages = state.messages + [AIMessage(content=state.final_response)]
+        return state
+
     results = search_product(last_human, n_results=5)
     if not results:
         msg = f"Не нашла «{last_human}» в базе продуктов. Попробуйте другое название."
@@ -465,8 +484,19 @@ def handle_general_chat(state: AgentState) -> AgentState:
     """Handles general conversation about food/nutrition."""
     logger.info("handle_general_chat")
 
+    last_human = ""
+    for msg in reversed(state.messages):
+        if isinstance(msg, HumanMessage):
+            last_human = msg.content if isinstance(msg.content, str) else str(msg.content)
+            break
+
+    if not last_human:
+        state.final_response = "Пожалуйста, задайте вопрос о питании."
+        state.messages = state.messages + [AIMessage(content=state.final_response)]
+        return state
+
     llm = _get_llm()
-    msgs = [SystemMessage(content=SYSTEM_PROMPT)] + state.messages
+    msgs = [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=last_human)]
     response = llm.invoke(msgs)
 
     state.final_response = response.content

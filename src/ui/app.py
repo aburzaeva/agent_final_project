@@ -158,7 +158,11 @@ def run_agent(user_text: str, image_data: tuple | None = None):
         state.image_base64 = img_base64
         state.image_media_type = media_type
 
-    result = agent.invoke(state)
+    try:
+        result = agent.invoke(state)
+    except Exception as e:
+        logger.error("agent_invoke_error", error=str(e), session_id=st.session_state.session_id)
+        return f"Произошла ошибка при обработке запроса. Попробуйте ещё раз."
 
     response = result.get("final_response", "")
     if not response and result.get("messages"):
